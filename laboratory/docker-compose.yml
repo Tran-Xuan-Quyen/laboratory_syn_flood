@@ -1,0 +1,110 @@
+version: '3.8'
+services:
+  victim-db:
+    image: postgres:15.1-alpine
+    container_name: victim-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - 5432:5432
+    volumes:
+      - .././server/sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      lab_net:
+        ipv4_address: 172.20.0.5
+    
+  victim-backend-limited:
+    build: .././server
+    container_name: victim_backend_limited
+    sysctls:
+      net.core.somaxconn: 10
+      net.ipv4.tcp_max_syn_backlog: 10
+      net.ipv4.tcp_syncookies: 0
+    ports:
+      - 3001:3000
+    volumes:
+      - .././server:/app
+      - /app/node_modules
+      - /app/dist
+    networks:
+      lab_net:
+        ipv4_address: 172.20.0.10
+    depends_on:
+      - victim-db
+    environment:
+      - APP_PORT=3000
+      - DB_HOST=172.20.0.5
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=postgres
+      - DB_SSL=false
+
+  victim-backend-unlimited:
+    build: .././server
+    container_name: victim_backend_unlimited
+    ports:
+      - 3002:3000
+    volumes:
+      - .././server:/app
+      - /app/node_modules
+      - /app/dist
+    networks:
+      lab_net:
+        ipv4_address: 172.20.0.11
+    depends_on:
+      - victim-db
+    environment:
+      - APP_PORT=3000
+      - DB_HOST=172.20.0.5
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=postgres
+      - DB_SSL=false
+
+  attacker:
+    build: .././attacker-code
+    container_name: attacker_machine
+    profiles:
+      - tools
+    tty: true
+    working_dir: /app
+    volumes:
+      - .././attacker-code:/app
+    privileged: true
+    networks:
+      lab_net:
+        ipv4_address: 172.20.0.20
+
+  user-simulator:
+    build: .././user-simulator
+    container_name: user_simulator
+    profiles:
+      - tools
+    depends_on:
+      - victim-backend-limited
+      - victim-backend-unlimited
+    networks:
+      lab_net:
+        ipv4_address: 172.20.0.30
+    command:
+      - node
+      - src/main.js
+      - --victim1
+      - http://172.20.0.10:3000/projects/
+      - --victim2
+      - http://172.20.0.11:3000/projects/
+      - --duration
+      - "600"
+      - --interval
+      - "3"
+
+networks:
+  lab_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
