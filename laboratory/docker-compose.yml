@@ -45,6 +45,8 @@ services:
   victim-backend-unlimited:
     build: .././server
     container_name: victim_backend_unlimited
+    sysctls:
+      net.ipv4.tcp_syncookies: 0
     ports:
       - 3002:3000
     volumes:
@@ -100,7 +102,9 @@ services:
       - --duration
       - "600"
       - --interval
-      - "3"
+      - "0.5"
+      - --warmup
+      - "60"
 
 networks:
   lab_net:

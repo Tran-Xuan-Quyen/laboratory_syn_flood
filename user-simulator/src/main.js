@@ -1,6 +1,7 @@
 const DEFAULT_DURATION = 600;
-const DEFAULT_INTERVAL = 3;
-const DEFAULT_TIMEOUT = 10;
+const DEFAULT_INTERVAL = 0.5;
+const DEFAULT_TIMEOUT = 5;
+const DEFAULT_WARMUP = 60;
 
 async function measureRequest(url, timeoutMs) {
   const start = performance.now();
@@ -9,7 +10,11 @@ async function measureRequest(url, timeoutMs) {
   try {
     const res = await fetch(url, {
       signal: controller.signal,
-      headers: { Connection: 'close' },
+      headers: {
+        Connection: 'close',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        Pragma: 'no-cache',
+      },
     });
     clearTimeout(timeoutId);
     const elapsed = (performance.now() - start) / 1000;
@@ -42,6 +47,7 @@ function parseArgs() {
     duration: DEFAULT_DURATION,
     interval: DEFAULT_INTERVAL,
     timeout: DEFAULT_TIMEOUT,
+    warmup: DEFAULT_WARMUP,
   };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--victim1' && args[i + 1]) opts.victim1 = args[++i];
@@ -49,17 +55,24 @@ function parseArgs() {
     else if (args[i] === '--duration' && args[i + 1]) opts.duration = parseInt(args[++i], 10);
     else if (args[i] === '--interval' && args[i + 1]) opts.interval = parseFloat(args[++i]);
     else if (args[i] === '--timeout' && args[i + 1]) opts.timeout = parseFloat(args[++i]);
+    else if (args[i] === '--warmup' && args[i + 1]) opts.warmup = parseInt(args[++i], 10);
   }
   return opts;
 }
 
-async function runSimulator({ victim1, victim2, duration, interval, timeout }) {
+async function runSimulator({ victim1, victim2, duration, interval, timeout, warmup }) {
   const stats1 = { success: 0, timeout: 0, fail: 0, times: [] };
   const stats2 = { success: 0, timeout: 0, fail: 0, times: [] };
-  const endTime = Date.now() + duration * 1000;
-  let nextReq = Date.now();
+  const endTime = Date.now() + warmup * 1000 + duration * 1000;
+  let nextReq = Date.now() + warmup * 1000;
   let lastLog = Date.now();
   const logInterval = 30;
+
+  if (warmup > 0) {
+    console.log(`Warmup ${warmup}s (attacker fills backlog, no requests yet)...`);
+    await new Promise((r) => setTimeout(r, warmup * 1000));
+    console.log('Warmup done, starting requests');
+  }
 
   console.log(`Running for ${duration}s, interval ${interval}s, timeout ${timeout}s`);
   console.log(`Victim 1 (limited):  ${victim1}`);
