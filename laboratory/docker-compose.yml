@@ -67,19 +67,118 @@ services:
       - DB_NAME=postgres
       - DB_SSL=false
 
-  attacker:
+  victim-backend-syncookies:
+    build: .././server
+    container_name: victim_backend_syncookies
+    sysctls:
+      net.ipv4.tcp_syncookies: 1
+      net.core.somaxconn: 128
+      net.ipv4.tcp_max_syn_backlog: 256
+    ports:
+      - 3003:3000
+    volumes:
+      - .././server:/app
+      - /app/node_modules
+      - /app/dist
+    networks:
+      lab_net:
+        ipv4_address: 172.20.0.12
+    depends_on:
+      - victim-db
+    environment:
+      - APP_PORT=3000
+      - DB_HOST=172.20.0.5
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=postgres
+      - DB_SSL=false
+
+  victim-backend-large-backlog:
+    build: .././server
+    container_name: victim_backend_large_backlog
+    sysctls:
+      net.core.somaxconn: 4096
+      net.ipv4.tcp_max_syn_backlog: 8192
+      net.ipv4.tcp_syncookies: 0
+    ports:
+      - 3004:3000
+    volumes:
+      - .././server:/app
+      - /app/node_modules
+      - /app/dist
+    networks:
+      lab_net:
+        ipv4_address: 172.20.0.13
+    depends_on:
+      - victim-db
+    environment:
+      - APP_PORT=3000
+      - DB_HOST=172.20.0.5
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=postgres
+      - DB_SSL=false
+
+  victim-backend-hardened:
+    build: .././server
+    container_name: victim_backend_hardened
+    sysctls:
+      net.ipv4.tcp_syncookies: 1
+      net.core.somaxconn: 4096
+      net.ipv4.tcp_max_syn_backlog: 8192
+    ports:
+      - 3005:3000
+    volumes:
+      - .././server:/app
+      - /app/node_modules
+      - /app/dist
+    networks:
+      lab_net:
+        ipv4_address: 172.20.0.14
+    depends_on:
+      - victim-db
+    environment:
+      - APP_PORT=3000
+      - DB_HOST=172.20.0.5
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=postgres
+      - DB_SSL=false
+
+  attacker-baseline:
     build: .././attacker-code
-    container_name: attacker_machine
+    image: syn-flood-attacker:latest
+    container_name: attacker_baseline
     profiles:
       - tools
     tty: true
     working_dir: /app
+    command: ["attacker-code", "-target-ip=172.20.0.10,172.20.0.11", "-target-port=3000", "-workers=500"]
     volumes:
       - .././attacker-code:/app
     privileged: true
     networks:
       lab_net:
         ipv4_address: 172.20.0.20
+
+  attacker-mitigations:
+    build: .././attacker-code
+    image: syn-flood-attacker:latest
+    container_name: attacker_mitigations
+    profiles:
+      - tools
+    tty: true
+    working_dir: /app
+    command: ["attacker-code", "-target-ip=172.20.0.12,172.20.0.13,172.20.0.14", "-target-port=3000", "-workers=500"]
+    volumes:
+      - .././attacker-code:/app
+    privileged: true
+    networks:
+      lab_net:
+        ipv4_address: 172.20.0.21
 
   user-simulator:
     build: .././user-simulator
@@ -89,16 +188,27 @@ services:
     depends_on:
       - victim-backend-limited
       - victim-backend-unlimited
+      - victim-backend-syncookies
+      - victim-backend-large-backlog
+      - victim-backend-hardened
     networks:
       lab_net:
         ipv4_address: 172.20.0.30
     command:
       - node
       - src/main.js
-      - --victim1
+      - --victim
       - http://172.20.0.10:3000/projects/
-      - --victim2
+      - --victim
       - http://172.20.0.11:3000/projects/
+      - --victim
+      - http://172.20.0.12:3000/projects/
+      - --victim
+      - http://172.20.0.13:3000/projects/
+      - --victim
+      - http://172.20.0.14:3000/projects/
+      - --names
+      - limited,unlimited,syncookies,large-backlog,hardened
       - --duration
       - "600"
       - --interval

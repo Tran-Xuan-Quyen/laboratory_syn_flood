@@ -3,6 +3,15 @@ const DEFAULT_INTERVAL = 0.5;
 const DEFAULT_TIMEOUT = 5;
 const DEFAULT_WARMUP = 60;
 
+function formatFetchError(err) {
+  const parts = [err.name, err.message];
+  if (err.cause) {
+    const c = err.cause;
+    parts.push(c.code || c.errno || c.syscall || '', c.message || String(c));
+  }
+  return parts.filter(Boolean).join(' | ');
+}
+
 async function measureRequest(url, timeoutMs) {
   const start = performance.now();
   const controller = new AbortController();
@@ -23,8 +32,18 @@ async function measureRequest(url, timeoutMs) {
     clearTimeout(timeoutId);
     const elapsed = (performance.now() - start) / 1000;
     const isTimeout = err.name === 'AbortError';
-    return { success: false, timeout: isTimeout, elapsed, error: err.code || err.message };
+    return { success: false, timeout: isTimeout, elapsed, error: formatFetchError(err) };
   }
+}
+
+async function probeUrl(label, url, timeoutMs) {
+  const r = await measureRequest(url, timeoutMs);
+  if (r.success) {
+    console.log(`${label} OK (${r.elapsed.toFixed(3)}s) ${url}`);
+    return true;
+  }
+  console.error(`${label} FAIL: ${r.error || r.status} ${url}`);
+  return false;
 }
 
 function p95(times) {
@@ -41,32 +60,81 @@ function avg(times) {
 
 function parseArgs() {
   const args = process.argv.slice(2);
+  const victimUrls = [];
+  let namesStr = '';
   const opts = {
-    victim1: 'http://127.0.0.1:3001/projects/',
-    victim2: 'http://127.0.0.1:3002/projects/',
     duration: DEFAULT_DURATION,
     interval: DEFAULT_INTERVAL,
     timeout: DEFAULT_TIMEOUT,
     warmup: DEFAULT_WARMUP,
+    victim1: 'http://127.0.0.1:3001/projects/',
+    victim2: 'http://127.0.0.1:3002/projects/',
   };
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--victim1' && args[i + 1]) opts.victim1 = args[++i];
+    if (args[i] === '--victim' && args[i + 1]) victimUrls.push(args[++i]);
+    else if (args[i] === '--names' && args[i + 1]) namesStr = args[++i];
+    else if (args[i] === '--victim1' && args[i + 1]) opts.victim1 = args[++i];
     else if (args[i] === '--victim2' && args[i + 1]) opts.victim2 = args[++i];
     else if (args[i] === '--duration' && args[i + 1]) opts.duration = parseInt(args[++i], 10);
     else if (args[i] === '--interval' && args[i + 1]) opts.interval = parseFloat(args[++i]);
     else if (args[i] === '--timeout' && args[i + 1]) opts.timeout = parseFloat(args[++i]);
     else if (args[i] === '--warmup' && args[i + 1]) opts.warmup = parseInt(args[++i], 10);
   }
-  return opts;
+  const names = namesStr
+    ? namesStr.split(',').map((s) => s.trim()).filter(Boolean)
+    : [];
+  let victims;
+  if (victimUrls.length > 0) {
+    victims = victimUrls.map((url, i) => ({
+      url,
+      name: names[i] || `V${i + 1}`,
+    }));
+  } else {
+    victims = [
+      { url: opts.victim1, name: names[0] || 'limited' },
+      { url: opts.victim2, name: names[1] || 'unlimited' },
+    ];
+  }
+  return { ...opts, victims };
 }
 
-async function runSimulator({ victim1, victim2, duration, interval, timeout, warmup }) {
-  const stats1 = { success: 0, timeout: 0, fail: 0, times: [] };
-  const stats2 = { success: 0, timeout: 0, fail: 0, times: [] };
+async function probeWithRetries(victims, timeout, attempts = 5, delayMs = 3000) {
+  for (let i = 1; i <= attempts; i++) {
+    let allOk = true;
+    for (const v of victims) {
+      const ok = await probeUrl(v.name, v.url, timeout);
+      if (!ok) allOk = false;
+    }
+    if (allOk) return true;
+    if (i < attempts) {
+      console.log(`Retry ${i}/${attempts - 1} in ${delayMs / 1000}s...`);
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+  return false;
+}
+
+async function runSimulator({ victims, duration, interval, timeout, warmup }) {
+  const stats = victims.map(() => ({
+    success: 0,
+    timeout: 0,
+    fail: 0,
+    times: [],
+  }));
   const endTime = Date.now() + warmup * 1000 + duration * 1000;
   let nextReq = Date.now() + warmup * 1000;
   let lastLog = Date.now();
   const logInterval = 30;
+
+  console.log('Connectivity check (victims must be up):');
+  const ok = await probeWithRetries(victims, timeout);
+  if (!ok) {
+    console.error('');
+    console.error('Use --victim URL (repeat) or --victim1 / --victim2 (legacy).');
+    console.error('Docker lab: 172.20.0.10–14:3000 on lab_net.');
+    process.exit(1);
+  }
+  console.log('');
 
   if (warmup > 0) {
     console.log(`Warmup ${warmup}s (attacker fills backlog, no requests yet)...`);
@@ -75,72 +143,68 @@ async function runSimulator({ victim1, victim2, duration, interval, timeout, war
   }
 
   console.log(`Running for ${duration}s, interval ${interval}s, timeout ${timeout}s`);
-  console.log(`Victim 1 (limited):  ${victim1}`);
-  console.log(`Victim 2 (unlimited): ${victim2}`);
+  victims.forEach((v) => console.log(`  ${v.name}: ${v.url}`));
   console.log(`Progress log every ${logInterval}s`);
   console.log('-'.repeat(60));
 
+  const failLogged = victims.map(() => 0);
+
   while (Date.now() < endTime) {
     if (Date.now() >= nextReq) {
-      const [r1, r2] = await Promise.all([
-        measureRequest(victim1, timeout),
-        measureRequest(victim2, timeout),
-      ]);
+      const results = await Promise.all(victims.map((v) => measureRequest(v.url, timeout)));
 
-      if (r1.success) {
-        stats1.success++;
-        stats1.times.push(r1.elapsed);
-      } else {
-        if (r1.timeout) stats1.timeout++;
-        else {
-          stats1.fail++;
-          if (stats1.fail <= 3) console.log(`V1 fail: ${r1.status || r1.error}`);
+      results.forEach((r, idx) => {
+        const s = stats[idx];
+        if (r.success) {
+          s.success++;
+          s.times.push(r.elapsed);
+        } else if (r.timeout) {
+          s.timeout++;
+        } else {
+          s.fail++;
+          if (failLogged[idx] < 5) {
+            console.log(`${victims[idx].name} fail: ${r.status || r.error}`);
+            failLogged[idx]++;
+          }
         }
-      }
-
-      if (r2.success) {
-        stats2.success++;
-        stats2.times.push(r2.elapsed);
-      } else {
-        if (r2.timeout) stats2.timeout++;
-        else {
-          stats2.fail++;
-          if (stats2.fail <= 3) console.log(`V2 fail: ${r2.status || r2.error}`);
-        }
-      }
+      });
 
       nextReq += interval * 1000;
 
       if (Date.now() - lastLog >= logInterval * 1000) {
-        const t1 = stats1.success + stats1.timeout + stats1.fail;
-        const t2 = stats2.success + stats2.timeout + stats2.fail;
         const elapsed = Math.round((Date.now() - (endTime - duration * 1000)) / 1000);
-        console.log(`[${elapsed}s] V1: ${stats1.success}/${t1} ok, ${stats1.timeout} timeout | V2: ${stats2.success}/${t2} ok, ${stats2.timeout} timeout`);
+        const parts = victims.map((v, i) => {
+          const s = stats[i];
+          const t = s.success + s.timeout + s.fail;
+          return `${v.name}: ${s.success}/${t} ok, ${s.timeout} to`;
+        });
+        console.log(`[${elapsed}s] ${parts.join(' | ')}`);
         lastLog = Date.now();
       }
     }
     await new Promise((r) => setTimeout(r, 100));
   }
 
-  const total1 = stats1.success + stats1.timeout + stats1.fail;
-  const total2 = stats2.success + stats2.timeout + stats2.fail;
-
-  const timeoutRate1 = total1 ? (stats1.timeout / total1) * 100 : 0;
-  const timeoutRate2 = total2 ? (stats2.timeout / total2) * 100 : 0;
-
   console.log('\n' + '='.repeat(60));
   console.log('COMPARISON REPORT (during SYN flood attack)');
   console.log('='.repeat(60));
-  console.log(`\n${'Metric'.padEnd(30)} ${'Victim 1 (limited)'.padEnd(20)} ${'Victim 2 (unlimited)'.padEnd(20)}`);
-  console.log('-'.repeat(70));
-  console.log(`${'Total requests'.padEnd(30)} ${String(total1).padEnd(20)} ${String(total2).padEnd(20)}`);
-  console.log(`${'Success'.padEnd(30)} ${String(stats1.success).padEnd(20)} ${String(stats2.success).padEnd(20)}`);
-  console.log(`${'Timeout'.padEnd(30)} ${String(stats1.timeout).padEnd(20)} ${String(stats2.timeout).padEnd(20)}`);
-  console.log(`${'Other fail'.padEnd(30)} ${String(stats1.fail).padEnd(20)} ${String(stats2.fail).padEnd(20)}`);
-  console.log(`${'Timeout rate %'.padEnd(30)} ${timeoutRate1.toFixed(2).padEnd(20)} ${timeoutRate2.toFixed(2).padEnd(20)}`);
-  console.log(`${'Avg response time (ms)'.padEnd(30)} ${avg(stats1.times).toFixed(2).padEnd(20)} ${avg(stats2.times).toFixed(2).padEnd(20)}`);
-  console.log(`${'P95 response time (ms)'.padEnd(30)} ${p95(stats1.times).toFixed(2).padEnd(20)} ${p95(stats2.times).toFixed(2).padEnd(20)}`);
-  console.log('='.repeat(60));
+
+  victims.forEach((v, i) => {
+    const s = stats[i];
+    const total = s.success + s.timeout + s.fail;
+    const timeoutRate = total ? (s.timeout / total) * 100 : 0;
+    console.log('');
+    console.log(`--- ${v.name} ---`);
+    console.log(`  Total requests: ${total}`);
+    console.log(`  Success: ${s.success}`);
+    console.log(`  Timeout: ${s.timeout}`);
+    console.log(`  Other fail: ${s.fail}`);
+    console.log(`  Timeout rate %: ${timeoutRate.toFixed(2)}`);
+    console.log(`  Avg response time (ms): ${avg(s.times).toFixed(2)}`);
+    console.log(`  P95 response time (ms): ${p95(s.times).toFixed(2)}`);
+  });
+
+  console.log('\n' + '='.repeat(60));
 }
 
 const opts = parseArgs();
