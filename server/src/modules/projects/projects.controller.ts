@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -7,12 +8,13 @@ import {
   Param,
   Post,
   Put,
-  Res,
+  Query,
 } from '@nestjs/common';
 import { ProjectsService } from './projects.service';
 import {
   ApiBearerAuth,
   ApiOperation,
+  ApiQuery,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
@@ -32,13 +34,30 @@ export class ProjectsController {
   ) {}
 
   @Get()
-  @ApiOperation({ summary: 'Get all projects' })
+  @ApiOperation({
+    summary: 'Get all projects, or one project when id query is set',
+  })
+  @ApiQuery({
+    name: 'id',
+    required: false,
+    description:
+      'If set, returns the same as GET /projects/:id (WAF-friendly query form).',
+  })
   @ApiResponse({
     status: 200,
-    description: 'Return all projects.',
+    description: 'Return all projects, or one project when id is provided.',
     type: [ProjectsResponseModel],
   })
-  async findAll() {
+  async findAll(@Query('id') id?: string) {
+    if (id !== undefined && id !== '') {
+      const num = Number(id);
+      if (!Number.isInteger(num) || num < 1) {
+        throw new BadRequestException('Query id must be a positive integer');
+      }
+      console.log(`[P]:::Get project by query id: ${num}`);
+      const project = await this.projectsService.findOne(num);
+      return plainToInstance(ProjectsResponseModel, project);
+    }
     console.log(`[P]:::Get all projects data`);
     const projects = await this.projectsService.findAll();
     let result = plainToInstance(ProjectsResponseModel, projects);
