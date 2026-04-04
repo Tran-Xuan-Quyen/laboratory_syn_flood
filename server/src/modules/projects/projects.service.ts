@@ -1,11 +1,16 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Project } from './projects.entity';
-import { Repository } from 'typeorm';
+import { FindOptionsWhere, ILike, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ProjectsRequestModel } from './dto/projects.request.model';
 import { ProjectsUpdateModel } from './dto/projects.update.model';
 import { UserProject } from '../user-projects/user-projects.entity';
 import { User } from '../users/users.entity';
+
+export type ProjectsListFilters = {
+  projectName?: string;
+  applicationDomain?: string;
+};
 
 @Injectable()
 export class ProjectsService {
@@ -16,14 +21,24 @@ export class ProjectsService {
     private userProjectsRepository: Repository<UserProject>,
   ) {}
 
-  async findAll(): Promise<Project[]> {
+  async findAll(filters?: ProjectsListFilters): Promise<Project[]> {
     try {
-      const projects = await this.projectsRepository.find();
+      const where: FindOptionsWhere<Project> = {};
+      if (filters?.projectName) {
+        where.projectName = ILike(`%${filters.projectName}%`);
+      }
+      if (filters?.applicationDomain) {
+        where.applicationDomain = ILike(`%${filters.applicationDomain}%`);
+      }
+      const projects = await this.projectsRepository.find({ where });
       if (!projects.length) {
         throw new NotFoundException('No project found, please try again');
       }
       return projects;
     } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
       throw new Error(`Failed to fetch projects: ${error.message}`);
     }
   }

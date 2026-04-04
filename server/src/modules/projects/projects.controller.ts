@@ -22,6 +22,7 @@ import { ProjectsUpdateModel } from './dto/projects.update.model';
 import { ProjectsResponseModel } from './dto/projects.response.model';
 import { plainToInstance } from 'class-transformer';
 import { ProjectsRequestModel } from './dto/projects.request.model';
+import { ProjectsQueryDto } from './dto/projects.query.model';
 import { UsersService } from '../users/users.service';
 
 @ApiTags('projects')
@@ -35,7 +36,8 @@ export class ProjectsController {
 
   @Get()
   @ApiOperation({
-    summary: 'Get all projects, or one project when id query is set',
+    summary:
+      'Get all projects (optional filters), or one project when id query is set',
   })
   @ApiQuery({
     name: 'id',
@@ -43,12 +45,25 @@ export class ProjectsController {
     description:
       'If set, returns the same as GET /projects/:id (WAF-friendly query form).',
   })
+  @ApiQuery({
+    name: 'project_name',
+    required: false,
+    description:
+      'Filter by project name (case-insensitive substring). Ignored if id is set.',
+  })
+  @ApiQuery({
+    name: 'application_domain',
+    required: false,
+    description:
+      'Filter by application domain (case-insensitive substring). Ignored if id is set.',
+  })
   @ApiResponse({
     status: 200,
     description: 'Return all projects, or one project when id is provided.',
     type: [ProjectsResponseModel],
   })
-  async findAll(@Query('id') id?: string) {
+  async findAll(@Query() query: ProjectsQueryDto) {
+    const { id, project_name, application_domain } = query;
     if (id !== undefined && id !== '') {
       const num = Number(id);
       if (!Number.isInteger(num) || num < 1) {
@@ -58,8 +73,17 @@ export class ProjectsController {
       const project = await this.projectsService.findOne(num);
       return plainToInstance(ProjectsResponseModel, project);
     }
+    const projectName = project_name?.trim();
+    const applicationDomain = application_domain?.trim();
+    const listFilters =
+      projectName || applicationDomain
+        ? {
+            ...(projectName ? { projectName } : {}),
+            ...(applicationDomain ? { applicationDomain } : {}),
+          }
+        : undefined;
     console.log(`[P]:::Get all projects data`);
-    const projects = await this.projectsService.findAll();
+    const projects = await this.projectsService.findAll(listFilters);
     let result = plainToInstance(ProjectsResponseModel, projects);
     return result;
   }
