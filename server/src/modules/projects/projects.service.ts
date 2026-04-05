@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Project } from './projects.entity';
-import { FindOptionsWhere, ILike, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ProjectsRequestModel } from './dto/projects.request.model';
 import { ProjectsUpdateModel } from './dto/projects.update.model';
@@ -23,14 +23,17 @@ export class ProjectsService {
 
   async findAll(filters?: ProjectsListFilters): Promise<Project[]> {
     try {
-      const where: FindOptionsWhere<Project> = {};
+      let sql = `SELECT * FROM projects WHERE 1=1`;
       if (filters?.projectName) {
-        where.projectName = ILike(`%${filters.projectName}%`);
+        sql += ` AND project_name = '${filters.projectName}'`;
       }
       if (filters?.applicationDomain) {
-        where.applicationDomain = ILike(`%${filters.applicationDomain}%`);
+        sql += ` AND application_domain = '${filters.applicationDomain}'`;
       }
-      const projects = await this.projectsRepository.find({ where });
+      const rows = await this.projectsRepository.query(sql);
+      const projects = rows.map((row: Record<string, unknown>) =>
+        this.mapProjectRow(row),
+      );
       if (!projects.length) {
         throw new NotFoundException('No project found, please try again');
       }
@@ -41,6 +44,17 @@ export class ProjectsService {
       }
       throw new Error(`Failed to fetch projects: ${error.message}`);
     }
+  }
+
+  private mapProjectRow(row: Record<string, unknown>): Project {
+    return {
+      id: row.id as number,
+      projectName: row.project_name as string,
+      applicationDomain: row.application_domain as string,
+      description: row.description as string,
+      createdAt: row.created_at as Date,
+      updatedAt: row.updated_at as Date,
+    } as Project;
   }
 
   async findOne(id: number): Promise<Project> {
