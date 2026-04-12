@@ -11,17 +11,31 @@ export class ProjectsQueryDto {
   id?: string;
 
   @ApiPropertyOptional({
-    description: 'Filter by project name (case-insensitive substring match).',
+    description: 'Filter by project name (snake_case query key).',
   })
   @IsOptional()
   @IsString()
   project_name?: string;
 
   @ApiPropertyOptional({
+    description: 'Same as project_name (camelCase query key).',
+  })
+  @IsOptional()
+  @IsString()
+  projectName?: string;
+
+  @ApiPropertyOptional({
     description:
-      'Filter by application domain (case-insensitive substring match).',
+      'Filter by application domain (snake_case query key).',
   })
   @IsOptional()
   @IsString()
   application_domain?: string;
+
+  @ApiPropertyOptional({
+    description: 'Same as application_domain (camelCase query key).',
+  })
+  @IsOptional()
+  @IsString()
+  applicationDomain?: string;
 }

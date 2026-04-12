@@ -172,8 +172,8 @@ INSERT INTO roles (role_name) VALUES
 -- ==========================================
 INSERT INTO projects (project_name, application_domain, description, created_at, updated_at)
 VALUES 
-    ('Project 1', 'https://example.com', NULL, '2025-05-27 09:18:06.399', '2025-05-27 09:18:06.399'),
-    ('Project 2', 'https://example.com', NULL, '2025-05-27 09:26:25.350', '2025-05-27 09:26:25.350');
+    ('Project_1', 'https://example.com', NULL, '2025-05-27 09:18:06.399', '2025-05-27 09:18:06.399'),
+    ('Project_3', 'https://example.com', NULL, '2025-05-27 09:26:25.350', '2025-05-27 09:26:25.350');
 
 -- ==========================================
 -- INITIAL DATA: Users

@@ -57,13 +57,23 @@ export class ProjectsController {
     description:
       'Filter by application domain (case-insensitive substring). Ignored if id is set.',
   })
+  @ApiQuery({
+    name: 'projectName',
+    required: false,
+    description: 'Same as project_name (camelCase). Ignored if id is set.',
+  })
+  @ApiQuery({
+    name: 'applicationDomain',
+    required: false,
+    description: 'Same as application_domain (camelCase). Ignored if id is set.',
+  })
   @ApiResponse({
     status: 200,
     description: 'Return all projects, or one project when id is provided.',
     type: [ProjectsResponseModel],
   })
   async findAll(@Query() query: ProjectsQueryDto) {
-    const { id, project_name, application_domain } = query;
+    const { id } = query;
     if (id !== undefined && id !== '') {
       const num = Number(id);
       if (!Number.isInteger(num) || num < 1) {
@@ -73,8 +83,10 @@ export class ProjectsController {
       const project = await this.projectsService.findOne(num);
       return plainToInstance(ProjectsResponseModel, project);
     }
-    const projectName = project_name?.trim();
-    const applicationDomain = application_domain?.trim();
+    const projectName = (query.project_name ?? query.projectName)?.trim();
+    const applicationDomain = (
+      query.application_domain ?? query.applicationDomain
+    )?.trim();
     const listFilters =
       projectName || applicationDomain
         ? {
